@@ -1,0 +1,234 @@
+<html>
+	<head>
+		<style>
+			#background {
+				width: 640;
+				height: 360;
+			}
+		</style>
+
+		<script id="vertex-shader" type="x-shader/x-vertex">
+			attribute vec2 position;
+
+			void main() {
+				gl_Position = vec4( position, 0.0, 1.0 );
+			}
+		</script>
+
+		<script id="fragment-shader" type="x-shader/x-fragment">
+			precision mediump float;
+
+			uniform sampler2D uSampler;
+			uniform vec2 resolution;
+
+			void main(void) {
+				highp vec4 texelColor = texture2D(uSampler, gl_FragCoord.xy / resolution.xy);
+
+				gl_FragColor = texelColor.rgba;
+				//gl_FragColor = vec4(0, 0, 1, 1);
+			}
+		</script>
+		<script id="fragment-shader-hblur" type="x-shader/x-fragment">
+			precision mediump float;
+
+			//declare uniforms
+			uniform sampler2D uSampler;
+			uniform vec2 resolution;
+			const float radius = 1.0;
+
+			void main() {
+				vec4 sum = vec4(0.0);
+
+				vec2 tc = gl_FragCoord.xy / resolution.xy;
+
+				float blur = radius / resolution.x; 
+
+				sum += texture2D(uSampler, vec2(tc.x - 4.0*blur, tc.y)) * 0.0162162162;
+				sum += texture2D(uSampler, vec2(tc.x - 3.0*blur, tc.y)) * 0.0540540541;
+				sum += texture2D(uSampler, vec2(tc.x - 2.0*blur, tc.y)) * 0.1216216216;
+				sum += texture2D(uSampler, vec2(tc.x - 1.0*blur, tc.y)) * 0.1945945946;
+
+				sum += texture2D(uSampler, vec2(tc.x, tc.y)) * 0.2270270270;
+
+				sum += texture2D(uSampler, vec2(tc.x + 1.0*blur, tc.y)) * 0.1945945946;
+				sum += texture2D(uSampler, vec2(tc.x + 2.0*blur, tc.y)) * 0.1216216216;
+				sum += texture2D(uSampler, vec2(tc.x + 3.0*blur, tc.y)) * 0.0540540541;
+				sum += texture2D(uSampler, vec2(tc.x + 4.0*blur, tc.y)) * 0.0162162162;
+
+                //discard alpha
+				gl_FragColor = vec4(sum.rgb, 1.0);
+			}
+		</script>
+		<script id="fragment-shader-vblur" type="x-shader/x-fragment">
+			precision mediump float;
+
+			//declare uniforms
+			uniform sampler2D uSampler;
+			uniform vec2 resolution;
+			const float radius = 1.0;
+
+			void main() {
+				//this will be our RGBA sum
+				vec4 sum = vec4(0.0);
+
+				//our original texcoord for this fragment
+				vec2 tc = gl_FragCoord.xy / resolution.xy;
+
+				//the amount to blur, i.e. how far off center to sample from 
+				//1.0 -> blur by one pixel
+				//2.0 -> blur by two pixels, etc.
+				float blur = radius / resolution.y; 
+
+				//apply blurring, using a 9-tap filter with predefined gaussian weights
+
+				sum += texture2D(uSampler, vec2(tc.x, tc.y - 4.0*blur)) * 0.0162162162;
+				sum += texture2D(uSampler, vec2(tc.x, tc.y - 3.0*blur)) * 0.0540540541;
+				sum += texture2D(uSampler, vec2(tc.x, tc.y - 2.0*blur)) * 0.1216216216;
+				sum += texture2D(uSampler, vec2(tc.x, tc.y - 1.0*blur)) * 0.1945945946;
+                
+				sum += texture2D(uSampler, vec2(tc.x, tc.y)) * 0.2270270270;
+
+				sum += texture2D(uSampler, vec2(tc.x, tc.y + 1.0*blur)) * 0.1945945946;
+				sum += texture2D(uSampler, vec2(tc.x, tc.y + 2.0*blur)) * 0.1216216216;
+				sum += texture2D(uSampler, vec2(tc.x, tc.y + 3.0*blur)) * 0.0540540541;
+				sum += texture2D(uSampler, vec2(tc.x, tc.y + 4.0*blur)) * 0.0162162162;
+
+				//discard alpha
+				gl_FragColor = vec4(sum.rgb, 1.0);
+			}
+		</script>
+	</head>
+	<body>
+		<canvas id="background"></canvas>
+		<video id="background-source" muted="1" mute="1" src="./test.webm">
+		<script type="text/javascript">
+			'use strict';
+			var background = document.getElementById('background');
+			var backgroundSource = document.getElementById('background-source');
+
+			var gl;
+
+			try {
+				gl = background.getContext('experimental-webgl') || background.getContext('webgl');
+			} catch(e) {
+				throw new Error('Could not init webgl');
+			}
+
+			function createTexture(texIndex) {
+				var texture = gl.createTexture();
+
+				gl.activeTexture(texIndex);
+				gl.bindTexture(gl.TEXTURE_2D, texture);
+				gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+				gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+				gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+				gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+
+				return texture;
+			}
+
+			var texture = createTexture(gl.TEXTURE0);
+
+			function makeShader(name, type) {
+				var shader = gl.createShader(type);
+				gl.shaderSource(shader, document.getElementById(name).textContent);
+				gl.compileShader(shader);
+
+				if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+					throw new Error('Shader compile failed for ' + name + ':\n' + gl.getShaderInfoLog(shader));
+				}
+
+				return shader;
+			}
+
+			function makeProgram(vertexName, fragmentName, textureIndex) {
+				var program = gl.createProgram();
+				gl.attachShader(program, makeShader(vertexName, gl.VERTEX_SHADER));
+				gl.attachShader(program, makeShader(fragmentName, gl.FRAGMENT_SHADER));
+				gl.linkProgram(program);
+
+				if (gl.getProgramParameter(program, gl.LINK_STATUS) === null) {
+					throw Error('Shader link failed: ' + gl.getProgramInfoLog(program));
+				}
+
+				gl.useProgram(program);
+
+				var positionLocation = gl.getAttribLocation(program, 'position');
+				gl.uniform1i(gl.getUniformLocation(program, 'uSampler'), textureIndex);
+				gl.vertexAttribPointer(positionLocation, 2, gl.FLOAT, false, 0, 0);
+				gl.enableVertexAttribArray(positionLocation);
+
+				var resolutionLocation = gl.getUniformLocation(program, 'resolution');
+
+				return {
+					program: program,
+					resolutionLocation: resolutionLocation
+				};
+			}
+
+			function updateTexture() {
+				gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
+				gl.texImage2D(
+					gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA,gl.UNSIGNED_BYTE, backgroundSource
+				);
+			}
+
+			function makeRect() {
+				var vertices = new Float32Array([
+					-1, -1, 1,	-1, -1, 1,  // Triangle 1
+					-1, 1, 1,	-1, 1, 1   // Triangle 2
+				]);
+
+				var vbuffer = gl.createBuffer();
+				gl.bindBuffer(gl.ARRAY_BUFFER, vbuffer);
+				gl.bufferData(gl.ARRAY_BUFFER, vertices, gl.STATIC_DRAW);
+
+				var itemSize = 2;
+				return vertices.length / itemSize;
+			}
+
+			function makeFrameBuffer(size) {
+				var frameBuffer = gl.createFramebuffer();
+				gl.bindFramebuffer(gl.FRAMEBUFFER, frameBuffer);
+				var frameBufferTexture = createTexture(gl.TEXTURE1);
+				gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, size, size, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+
+				gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, frameBufferTexture, 0);
+				return frameBuffer;
+			}
+
+			var size = makeRect();
+
+			var fbSize = 512;
+
+			var frameBuffer = makeFrameBuffer(fbSize);
+
+			var hBlurPass = makeProgram('vertex-shader', 'fragment-shader-hblur', 0);
+			var vBlurPass = makeProgram('vertex-shader', 'fragment-shader-vblur', 1);
+
+			gl.activeTexture(gl.TEXTURE0);
+
+			function draw() {
+				requestAnimationFrame(draw);
+
+				updateTexture();
+
+				gl.bindFramebuffer(gl.FRAMEBUFFER, frameBuffer);
+				gl.useProgram(hBlurPass.program);
+				gl.uniform2f(hBlurPass.resolutionLocation, background.width, background.height);
+				gl.drawArrays(gl.TRIANGLES, 0, size);
+
+				gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+				gl.useProgram(vBlurPass.program);
+				gl.uniform2f(vBlurPass.resolutionLocation, fbSize, fbSize + 8);//fix for black bar
+				gl.drawArrays(gl.TRIANGLES, 0, size);
+			}
+
+			backgroundSource.addEventListener('loadeddata', function() {
+				requestAnimationFrame(draw);
+				backgroundSource.play();
+			}, false);
+
+		</script>
+	</body>
+</html>
